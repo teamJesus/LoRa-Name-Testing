@@ -43,8 +43,8 @@
 #define LONG_PRESS_MS 1000
 #define DEBOUNCE_MS 20
 
-// Character set: a-z, 0-9 (37 chars, no space to save RAM)
-const char CHARSET[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+// Character set: a-z, 0-9 - stored in PROGMEM to save RAM
+const char CHARSET[] PROGMEM = "abcdefghijklmnopqrstuvwxyz0123456789";
 #define CHARSET_LEN 36
 
 // Create LCD object
@@ -54,9 +54,9 @@ LiquidCrystal_I2C lcd(LCD_ADDR, LCD_COLS, LCD_ROWS);
 bool loRaOk = false;
 char deviceName[NAME_MAX_LEN + 1];
 bool namingMode = false;
-int namePos = 0;
+byte namePos = 0;
 
-// Button state tracking (optimized for RAM)
+// Button state tracking (4 buttons: BTN_1, BTN_2, BTN_3, BTN_4 - BTN_5 not used for naming)
 byte btnState[4] = {HIGH, HIGH, HIGH, HIGH};
 byte btnLastState[4] = {HIGH, HIGH, HIGH, HIGH};
 unsigned long btnPressTime[4] = {0, 0, 0, 0};
@@ -69,12 +69,10 @@ void loadNameFromEEPROM()
     {
         char c = EEPROM.read(NAME_EEPROM_ADDR + i);
         if (c == 0xFF || c == 0)
-            c = ' ';
+            c = 'a';
         deviceName[i] = c;
     }
     deviceName[NAME_MAX_LEN] = '\0';
-    Serial.print("Loaded name: ");
-    Serial.println(deviceName);
 }
 
 void saveNameToEEPROM()
@@ -83,8 +81,6 @@ void saveNameToEEPROM()
     {
         EEPROM.update(NAME_EEPROM_ADDR + i, deviceName[i]);
     }
-    Serial.print("Saved name: ");
-    Serial.println(deviceName);
 }
 
 void displayNameEditMode()
@@ -124,18 +120,14 @@ void displayMainScreen()
 
 void initLCD()
 {
-    Serial.println("Initializing LCD...");
     Wire.begin();
     lcd.init();
     lcd.backlight();
     lcd.clear();
-    Serial.println("LCD initialized");
 }
 
 void initLoRa()
 {
-    Serial.println("Initializing LoRa...");
-    
     // Reset LoRa module
     pinMode(PIN_LORA_RST, OUTPUT);
     digitalWrite(PIN_LORA_RST, HIGH);
@@ -152,23 +144,14 @@ void initLoRa()
     // Set pins and initialize
     LoRa.setPins(PIN_LORA_SS, PIN_LORA_RST, PIN_LORA_DIO0);
     
-    Serial.print("LoRa pins - SS:");
-    Serial.print(PIN_LORA_SS);
-    Serial.print(" RST:");
-    Serial.print(PIN_LORA_RST);
-    Serial.print(" DIO0:");
-    Serial.println(PIN_LORA_DIO0);
-    
     if (!LoRa.begin(LORA_FREQ))
     {
-        Serial.println("LoRa FAILED");
         loRaOk = false;
         lcd.setCursor(0, 0);
         lcd.print("LoRa: FAILED");
     }
     else
     {
-        Serial.println("LoRa OK");
         loRaOk = true;
     }
 }
@@ -179,12 +162,6 @@ void setup()
     Serial.begin(BAUD_RATE);
     delay(500);
     
-    Serial.println("\n\n=== LoRa Name Tester Starting ===");
-    if (IS_TRANSMITTER)
-        Serial.println("Mode: TRANSMITTER");
-    else
-        Serial.println("Mode: RECEIVER");
-    
     // Setup button pins (matching Hello World)
     pinMode(BTN_1, INPUT_PULLUP);
     pinMode(BTN_2, INPUT_PULLUP);
@@ -193,7 +170,7 @@ void setup()
     pinMode(BTN_5, INPUT_PULLUP);
     
     initLCD();
-    //loadNameFromEEPROM();
+    loadNameFromEEPROM();
     initLoRa();
     
     if (loRaOk)
@@ -212,19 +189,15 @@ void handleButtonPress(int btn)
             int idx = -1;
             for (int i = 0; i < CHARSET_LEN; ++i)
             {
-                if (CHARSET[i] == ch)
+                if (pgm_read_byte(&CHARSET[i]) == ch)
                 {
                     idx = i;
                     break;
                 }
             }
             idx = (idx - 1 + CHARSET_LEN) % CHARSET_LEN;
-            deviceName[namePos] = CHARSET[idx];
+            deviceName[namePos] = pgm_read_byte(&CHARSET[idx]);
             displayNameEditMode();
-            Serial.print("Char at pos ");
-            Serial.print(namePos);
-            Serial.print(": ");
-            Serial.println(deviceName[namePos]);
         }
         else if (btn == 1) // Button 2: cycle to next char
         {
@@ -232,26 +205,20 @@ void handleButtonPress(int btn)
             int idx = -1;
             for (int i = 0; i < CHARSET_LEN; ++i)
             {
-                if (CHARSET[i] == ch)
+                if (pgm_read_byte(&CHARSET[i]) == ch)
                 {
                     idx = i;
                     break;
                 }
             }
             idx = (idx + 1) % CHARSET_LEN;
-            deviceName[namePos] = CHARSET[idx];
+            deviceName[namePos] = pgm_read_byte(&CHARSET[idx]);
             displayNameEditMode();
-            Serial.print("Char at pos ");
-            Serial.print(namePos);
-            Serial.print(": ");
-            Serial.println(deviceName[namePos]);
         }
         else if (btn == 2) // Button 3: move to next position
         {
             namePos = (namePos + 1) % NAME_MAX_LEN;
             displayNameEditMode();
-            Serial.print("Moved to position ");
-            Serial.println(namePos);
         }
     }
     else
@@ -285,7 +252,6 @@ void handleLongPress(int btn)
             // Enter naming mode
             namingMode = true;
             namePos = 0;
-            Serial.println("Entering naming mode");
             displayNameEditMode();
         }
         else
@@ -293,7 +259,6 @@ void handleLongPress(int btn)
             // Exit naming mode and save
             namingMode = false;
             saveNameToEEPROM();
-            Serial.println("Exited naming mode, saved to EEPROM");
             lcd.clear();
             lcd.setCursor(0, 0);
             lcd.print("Name saved!");
@@ -328,9 +293,6 @@ void updateButtons()
                 {
                     btnPressTime[i] = millis();
                     btnLongPressHandled[i] = false;
-                    Serial.print("Button ");
-                    Serial.print(i + 1);
-                    Serial.println(" pressed");
                 }
                 else // Button released
                 {
@@ -340,9 +302,6 @@ void updateButtons()
                         handleButtonPress(i);
                     }
                     btnPressTime[i] = 0;
-                    Serial.print("Button ");
-                    Serial.print(i + 1);
-                    Serial.println(" released");
                 }
             }
         }
@@ -354,9 +313,6 @@ void updateButtons()
             {
                 btnLongPressHandled[i] = true;
                 handleLongPress(i);
-                Serial.print("Button ");
-                Serial.print(i + 1);
-                Serial.println(" long-pressed");
             }
         }
     }
@@ -386,9 +342,6 @@ void loop()
             }
             buffer[idx] = '\0';
             
-            Serial.print("Received: ");
-            Serial.println(buffer);
-            
             // Parse packet: "N:<name>"
             if (buffer[0] == 'N' && buffer[1] == ':')
             {
@@ -401,10 +354,6 @@ void loop()
                 delay(3000);
                 displayMainScreen();
             }
-            
-            int rssi = LoRa.packetRssi();
-            Serial.print("RSSI: ");
-            Serial.println(rssi);
         }
     }
     
