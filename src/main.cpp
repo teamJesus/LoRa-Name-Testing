@@ -3,15 +3,22 @@
 #include <LiquidCrystal_I2C.h>
 #include <SPI.h>
 #include <LoRa.h>
+#include <EEPROM.h>
 
 // ============ CONFIGURATION ============
 // Change IS_TRANSMITTER to false on one unit to make it a receiver
-#define IS_TRANSMITTER false
+#define IS_TRANSMITTER true
 
 // LoRa pins (adjust to match your wiring)
-#define LORA_SS 15      // Chip select
-#define LORA_RST 2      // Reset
-#define LORA_DIO0 3     // Interrupt pin (DIO0/G0)
+#define LORA_SS 15      // Chip select (D15)
+#define LORA_RST 2      // Reset (D2)
+#define LORA_DIO0 3     // Interrupt pin (DIO0/G0) (D3)
+
+// Button pins
+#define BTN_1 A0
+#define BTN_2 A1
+#define BTN_3 A2
+#define BTN_4 A3
 
 // LCD config
 #define LCD_ADDR 0x27
@@ -21,13 +28,90 @@
 // LoRa config
 #define LORA_FREQ 915E6 // 915 MHz
 
+// Naming config
+#define NAME_MAX_LEN 12
+#define NAME_EEPROM_ADDR 0
+#define LONG_PRESS_MS 1000
+#define DEBOUNCE_MS 20
+
+// Character set: a-z, 0-9 (37 chars, no space to save RAM)
+const char CHARSET[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+#define CHARSET_LEN 36
+
 // Create LCD object
 LiquidCrystal_I2C lcd(LCD_ADDR, LCD_COLS, LCD_ROWS);
 
 // State variables
 bool loRaOk = false;
-unsigned long lastTxTime = 0;
-const unsigned long TX_INTERVAL = 2000; // Send every 2 seconds
+char deviceName[NAME_MAX_LEN + 1];
+bool namingMode = false;
+int namePos = 0;
+
+// Button state tracking (optimized for RAM)
+byte btnState[4] = {HIGH, HIGH, HIGH, HIGH};
+byte btnLastState[4] = {HIGH, HIGH, HIGH, HIGH};
+unsigned long btnPressTime[4] = {0, 0, 0, 0};
+byte btnLongPressHandled[4] = {0, 0, 0, 0};
+unsigned long btnLastDebounce[4] = {0, 0, 0, 0};
+
+void loadNameFromEEPROM()
+{
+    for (int i = 0; i < NAME_MAX_LEN; ++i)
+    {
+        char c = EEPROM.read(NAME_EEPROM_ADDR + i);
+        if (c == 0xFF || c == 0)
+            c = ' ';
+        deviceName[i] = c;
+    }
+    deviceName[NAME_MAX_LEN] = '\0';
+    Serial.print("Loaded name: ");
+    Serial.println(deviceName);
+}
+
+void saveNameToEEPROM()
+{
+    for (int i = 0; i < NAME_MAX_LEN; ++i)
+    {
+        EEPROM.update(NAME_EEPROM_ADDR + i, deviceName[i]);
+    }
+    Serial.print("Saved name: ");
+    Serial.println(deviceName);
+}
+
+void displayNameEditMode()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Edit name");
+    lcd.setCursor(0, 1);
+    // Display name with cursor under current position
+    for (int i = 0; i < NAME_MAX_LEN && i < LCD_COLS; ++i)
+    {
+        if (i == namePos)
+            lcd.print('[');
+        else
+            lcd.print(deviceName[i]);
+    }
+}
+
+void displayMainScreen()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Name: ");
+    // Display name (trimmed)
+    int nameLen = 0;
+    while (nameLen < NAME_MAX_LEN && deviceName[nameLen] != ' ')
+        nameLen++;
+    for (int i = 0; i < nameLen && i < 10; ++i)
+        lcd.print(deviceName[i]);
+    
+    lcd.setCursor(0, 1);
+    if (IS_TRANSMITTER)
+        lcd.print("Press BTN4 to TX");
+    else
+        lcd.print("Waiting RX...");
+}
 
 void initLCD()
 {
@@ -77,26 +161,6 @@ void initLoRa()
     {
         Serial.println("LoRa OK");
         loRaOk = true;
-        lcd.setCursor(0, 0);
-        if (IS_TRANSMITTER)
-            lcd.print("TX Mode");
-        else
-            lcd.print("RX Mode");
-    }
-}
-
-void displayOnLCD(const char *line1, const char *line2 = NULL)
-{
-    lcd.clear();
-    if (line1)
-    {
-        lcd.setCursor(0, 0);
-        lcd.print(line1);
-    }
-    if (line2)
-    {
-        lcd.setCursor(0, 1);
-        lcd.print(line2);
     }
 }
 
@@ -106,18 +170,185 @@ void setup()
     Serial.begin(9600);
     delay(500);
     
-    Serial.println("\n\n=== LoRa LCD Test Starting ===");
+    Serial.println("\n\n=== LoRa Name Tester Starting ===");
     if (IS_TRANSMITTER)
         Serial.println("Mode: TRANSMITTER");
     else
         Serial.println("Mode: RECEIVER");
     
+    // Setup button pins
+    pinMode(BTN_1, INPUT_PULLUP);
+    pinMode(BTN_2, INPUT_PULLUP);
+    pinMode(BTN_3, INPUT_PULLUP);
+    pinMode(BTN_4, INPUT_PULLUP);
+    
     initLCD();
+    loadNameFromEEPROM();
     initLoRa();
     
     if (loRaOk)
     {
-        displayOnLCD(IS_TRANSMITTER ? "TX: Ready" : "RX: Ready");
+        displayMainScreen();
+    }
+}
+
+void handleButtonPress(int btn)
+{
+    if (namingMode)
+    {
+        if (btn == 0) // Button 1: cycle to previous char
+        {
+            char &ch = deviceName[namePos];
+            int idx = -1;
+            for (int i = 0; i < CHARSET_LEN; ++i)
+            {
+                if (CHARSET[i] == ch)
+                {
+                    idx = i;
+                    break;
+                }
+            }
+            idx = (idx - 1 + CHARSET_LEN) % CHARSET_LEN;
+            deviceName[namePos] = CHARSET[idx];
+            displayNameEditMode();
+            Serial.print("Char at pos ");
+            Serial.print(namePos);
+            Serial.print(": ");
+            Serial.println(deviceName[namePos]);
+        }
+        else if (btn == 1) // Button 2: cycle to next char
+        {
+            char &ch = deviceName[namePos];
+            int idx = -1;
+            for (int i = 0; i < CHARSET_LEN; ++i)
+            {
+                if (CHARSET[i] == ch)
+                {
+                    idx = i;
+                    break;
+                }
+            }
+            idx = (idx + 1) % CHARSET_LEN;
+            deviceName[namePos] = CHARSET[idx];
+            displayNameEditMode();
+            Serial.print("Char at pos ");
+            Serial.print(namePos);
+            Serial.print(": ");
+            Serial.println(deviceName[namePos]);
+        }
+        else if (btn == 2) // Button 3: move to next position
+        {
+            namePos = (namePos + 1) % NAME_MAX_LEN;
+            displayNameEditMode();
+            Serial.print("Moved to position ");
+            Serial.println(namePos);
+        }
+    }
+    else
+    {
+        // Main mode
+        if (btn == 3 && IS_TRANSMITTER) // Button 4: transmit name
+        {
+            Serial.println("Transmitting name...");
+            char packet[NAME_MAX_LEN + 2];
+            snprintf(packet, sizeof(packet), "N:%s", deviceName);
+            LoRa.beginPacket();
+            LoRa.print(packet);
+            LoRa.endPacket();
+            Serial.print("Sent: ");
+            Serial.println(packet);
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Sent!");
+            delay(1000);
+            displayMainScreen();
+        }
+    }
+}
+
+void handleLongPress(int btn)
+{
+    if (btn == 2) // Button 3
+    {
+        if (!namingMode)
+        {
+            // Enter naming mode
+            namingMode = true;
+            namePos = 0;
+            Serial.println("Entering naming mode");
+            displayNameEditMode();
+        }
+        else
+        {
+            // Exit naming mode and save
+            namingMode = false;
+            saveNameToEEPROM();
+            Serial.println("Exited naming mode, saved to EEPROM");
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Name saved!");
+            delay(1000);
+            displayMainScreen();
+        }
+    }
+}
+
+void updateButtons()
+{
+    int pins[4] = {BTN_1, BTN_2, BTN_3, BTN_4};
+    
+    for (int i = 0; i < 4; ++i)
+    {
+        int reading = digitalRead(pins[i]);
+        
+        // Debounce
+        if (reading != btnLastState[i])
+        {
+            btnLastDebounce[i] = millis();
+            btnLastState[i] = reading;
+        }
+        
+        if ((millis() - btnLastDebounce[i]) > DEBOUNCE_MS)
+        {
+            if (reading != btnState[i])
+            {
+                btnState[i] = reading;
+                
+                if (btnState[i] == LOW) // Button pressed
+                {
+                    btnPressTime[i] = millis();
+                    btnLongPressHandled[i] = false;
+                    Serial.print("Button ");
+                    Serial.print(i + 1);
+                    Serial.println(" pressed");
+                }
+                else // Button released
+                {
+                    unsigned long pressDuration = millis() - btnPressTime[i];
+                    if (pressDuration < LONG_PRESS_MS && !btnLongPressHandled[i])
+                    {
+                        handleButtonPress(i);
+                    }
+                    btnPressTime[i] = 0;
+                    Serial.print("Button ");
+                    Serial.print(i + 1);
+                    Serial.println(" released");
+                }
+            }
+        }
+        
+        // Long-press detection
+        if (btnState[i] == LOW && btnPressTime[i] > 0 && !btnLongPressHandled[i])
+        {
+            if (millis() - btnPressTime[i] >= LONG_PRESS_MS)
+            {
+                btnLongPressHandled[i] = true;
+                handleLongPress(i);
+                Serial.print("Button ");
+                Serial.print(i + 1);
+                Serial.println(" long-pressed");
+            }
+        }
     }
 }
 
@@ -129,38 +360,15 @@ void loop()
         return;
     }
     
-    if (IS_TRANSMITTER)
-    {
-        // Transmitter: send text every 2 seconds
-        unsigned long now = millis();
-        if (now - lastTxTime >= TX_INTERVAL)
-        {
-            lastTxTime = now;
-            
-            // Build message with counter
-            static int counter = 0;
-            char msg[20];
-            snprintf(msg, sizeof(msg), "TX: %d", counter++);
-            
-            Serial.print("Sending: ");
-            Serial.println(msg);
-            
-            LoRa.beginPacket();
-            LoRa.print(msg);
-            LoRa.endPacket();
-            
-            // Display on local LCD
-            displayOnLCD("TX Ready", msg);
-        }
-    }
-    else
+    updateButtons();
+    
+    if (!IS_TRANSMITTER && !namingMode)
     {
         // Receiver: listen for incoming packets
         int packetSize = LoRa.parsePacket();
         if (packetSize)
         {
-            // Read packet into buffer
-            char buffer[64] = {0};
+            char buffer[NAME_MAX_LEN + 10] = {0};
             int idx = 0;
             while (LoRa.available() && idx < (int)sizeof(buffer) - 1)
             {
@@ -171,15 +379,24 @@ void loop()
             Serial.print("Received: ");
             Serial.println(buffer);
             
-            // Display on LCD
-            displayOnLCD("RX:", buffer);
+            // Parse packet: "N:<name>"
+            if (buffer[0] == 'N' && buffer[1] == ':')
+            {
+                const char *remoteName = buffer + 2;
+                lcd.clear();
+                lcd.setCursor(0, 0);
+                lcd.print("From:");
+                lcd.setCursor(0, 1);
+                lcd.print(remoteName);
+                delay(3000);
+                displayMainScreen();
+            }
             
-            // Print signal strength
             int rssi = LoRa.packetRssi();
             Serial.print("RSSI: ");
             Serial.println(rssi);
         }
     }
     
-    delay(100); // Small delay to prevent overwhelming the loop
+    delay(50);
 }
