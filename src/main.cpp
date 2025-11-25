@@ -9,21 +9,27 @@
 // Change IS_TRANSMITTER to false on one unit to make it a receiver
 #define IS_TRANSMITTER true
 
-// LoRa pins (adjust to match your wiring)
-#define LORA_SS 15      // Chip select (D15)
-#define LORA_RST 2      // Reset (D2)
-#define LORA_DIO0 3     // Interrupt pin (DIO0/G0) (D3)
+// ============ PIN DEFINITIONS ============
+// Button pins (active LOW with INPUT_PULLUP, matching Hello World)
+#define BTN_1 8
+#define BTN_2 4
+#define BTN_3 5
+#define BTN_4 6
+#define BTN_5 7
 
-// Button pins
-#define BTN_1 A0
-#define BTN_2 A1
-#define BTN_3 A2
-#define BTN_4 A3
+// Buzzer pin (PWM-capable, matching Hello World)
+#define PIN_BUZZER 10
 
-// LCD config
+// LCD config (matching Hello World)
 #define LCD_ADDR 0x27
 #define LCD_COLS 16
 #define LCD_ROWS 2
+
+// ============ LORA PINS & CONFIG ============
+// LoRa pins (matching Hello World)
+#define PIN_LORA_SS 15      // Chip select (D15)
+#define PIN_LORA_RST 2      // Reset (D2)
+#define PIN_LORA_DIO0 3     // Interrupt pin (DIO0/G0) (D3)
 
 // LoRa config
 #define LORA_FREQ 915E6 // 915 MHz
@@ -128,27 +134,27 @@ void initLoRa()
     Serial.println("Initializing LoRa...");
     
     // Reset LoRa module
-    pinMode(LORA_RST, OUTPUT);
-    digitalWrite(LORA_RST, HIGH);
+    pinMode(PIN_LORA_RST, OUTPUT);
+    digitalWrite(PIN_LORA_RST, HIGH);
     delay(50);
-    digitalWrite(LORA_RST, LOW);
+    digitalWrite(PIN_LORA_RST, LOW);
     delay(50);
-    digitalWrite(LORA_RST, HIGH);
+    digitalWrite(PIN_LORA_RST, HIGH);
     delay(50);
     
     SPI.begin();
-    pinMode(LORA_SS, OUTPUT);
-    digitalWrite(LORA_SS, HIGH);
+    pinMode(PIN_LORA_SS, OUTPUT);
+    digitalWrite(PIN_LORA_SS, HIGH);
     
     // Set pins and initialize
-    LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
+    LoRa.setPins(PIN_LORA_SS, PIN_LORA_RST, PIN_LORA_DIO0);
     
     Serial.print("LoRa pins - SS:");
-    Serial.print(LORA_SS);
+    Serial.print(PIN_LORA_SS);
     Serial.print(" RST:");
-    Serial.print(LORA_RST);
+    Serial.print(PIN_LORA_RST);
     Serial.print(" DIO0:");
-    Serial.println(LORA_DIO0);
+    Serial.println(PIN_LORA_DIO0);
     
     if (!LoRa.begin(LORA_FREQ))
     {
@@ -176,11 +182,12 @@ void setup()
     else
         Serial.println("Mode: RECEIVER");
     
-    // Setup button pins
+    // Setup button pins (matching Hello World)
     pinMode(BTN_1, INPUT_PULLUP);
     pinMode(BTN_2, INPUT_PULLUP);
     pinMode(BTN_3, INPUT_PULLUP);
     pinMode(BTN_4, INPUT_PULLUP);
+    pinMode(BTN_5, INPUT_PULLUP);
     
     initLCD();
     loadNameFromEEPROM();
