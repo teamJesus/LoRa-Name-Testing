@@ -34,6 +34,9 @@
 // LoRa config
 #define LORA_FREQ 915E6 // 915 MHz
 
+// Serial config
+#define BAUD_RATE 9600 // Must match monitor_speed in platformio.ini
+
 // Naming config
 #define NAME_MAX_LEN 12
 #define NAME_EEPROM_ADDR 0
@@ -173,7 +176,7 @@ void initLoRa()
 void setup()
 {
     delay(2000);
-    Serial.begin(9600);
+    Serial.begin(BAUD_RATE);
     delay(500);
     
     Serial.println("\n\n=== LoRa Name Tester Starting ===");
@@ -190,7 +193,7 @@ void setup()
     pinMode(BTN_5, INPUT_PULLUP);
     
     initLCD();
-    loadNameFromEEPROM();
+    //loadNameFromEEPROM();
     initLoRa();
     
     if (loRaOk)
